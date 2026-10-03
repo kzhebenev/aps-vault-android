@@ -60,4 +60,11 @@
     <string name="s_lock_all">Завершить все сессии</string>
     <string name="s_version">Версия %1$s</string>
     <string name="done">Готово</string>
+    <string name="af_unlock">Разблокировать APS Vault</string>
+    <string name="af_search">Поиск в APS Vault</string>
+    <string name="af_needs_approval">Секрет требует подтверждения. Откройте его в приложении APS Vault.</string>
+    <string name="s_autofill">Служба автозаполнения</string>
+    <string name="s_autofill_hint">Подставляет логины и пароли в другие приложения и браузеры.</string>
+    <string name="s_autofill_on">Включена</string>
+    <string name="s_autofill_enable">Включить</string>
 </resources>

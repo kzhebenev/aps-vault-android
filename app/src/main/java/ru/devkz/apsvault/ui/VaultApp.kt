@@ -465,6 +465,22 @@ private fun SettingsScreen(vm: VaultViewModel, biometricAvailable: Boolean) {
                 Spacer(Modifier.width(12.dp))
                 Switch(checked = vm.biometricEnabled && biometricAvailable, enabled = biometricAvailable, onCheckedChange = vm::setBiometric)
             }
+            val ctx = LocalContext.current
+            val afm = ctx.getSystemService(android.view.autofill.AutofillManager::class.java)
+            var autofillOn by remember { mutableStateOf(afm?.hasEnabledAutofillServices() == true) }
+            LaunchedEffect(Unit) { autofillOn = afm?.hasEnabledAutofillServices() == true }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.s_autofill), style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.s_autofill_hint), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (autofillOn) Text(stringResource(R.string.s_autofill_on), color = MaterialTheme.colorScheme.primary)
+                else TextButton(onClick = {
+                    ctx.startActivity(Intent(android.provider.Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE)
+                        .setData(Uri.parse("package:" + ctx.packageName)))
+                }) { Text(stringResource(R.string.s_autofill_enable)) }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.s_autolock), modifier = Modifier.weight(1f))
                 listOf(1, 5, 15, 60).forEach { m ->

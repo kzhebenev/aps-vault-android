@@ -39,7 +39,12 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     var autolockMin by mutableStateOf(prefs.getInt("autolock_min", 5))
         private set
 
-    var screen by mutableStateOf<Screen>(if (base == null) Screen.Setup else Screen.Unlock)
+    var screen by mutableStateOf<Screen>(
+        when {
+            base == null -> Screen.Setup
+            Vault.unlocked(app) -> Screen.List
+            else -> Screen.Unlock
+        })
         private set
     var busy by mutableStateOf(false)
         private set
@@ -59,10 +64,17 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     var approval by mutableStateOf<ApprovalState>(ApprovalState.None)
         private set
 
-    private var api: VaultApi? = base?.let { VaultApi(it) }
+    private var api: VaultApi?
+        get() = Vault.api
+        set(v) { Vault.api = v }
     private var totpJob: Job? = null
     private var approvalJob: Job? = null
     private var backgroundSince = 0L
+
+    init {
+        Vault.current(app)
+        if (screen == Screen.List) refresh()
+    }
 
     val canUseStoredSession get() = base?.let { biometricEnabled && store.hasStored(it) } == true
 
@@ -107,6 +119,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val sid = a.unlock(password, totpCode)
                 a.sid = sid
+                Vault.touch()
                 needTotp = false
                 if (biometricEnabled) runCatching { store.save(a.base, sid) }
                 enterList()
@@ -132,6 +145,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 a.sid = sid
                 a.checkSession()
+                Vault.touch()
                 enterList()
             } catch (e: VaultException) {
                 a.sid = null
@@ -164,8 +178,9 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     fun onBackground() { backgroundSince = System.currentTimeMillis() }
 
     fun onForeground() {
-        if (backgroundSince == 0L || api?.sid == null) return
-        if (System.currentTimeMillis() - backgroundSince > autolockMin * 60_000L) dropLocal()
+        if (api?.sid == null) return
+        if ((backgroundSince != 0L && System.currentTimeMillis() - backgroundSince > autolockMin * 60_000L) ||
+            !Vault.unlocked(getApplication())) dropLocal()
         backgroundSince = 0L
     }
 
@@ -180,7 +195,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadList() {
         val a = api ?: return
-        try { secrets = a.list() } catch (e: Exception) { handle(e) }
+        try { secrets = a.list(); Vault.touch() } catch (e: Exception) { handle(e) }
     }
 
     fun filtered(): kotlin.collections.List<SecretItem> {
@@ -208,6 +223,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val full = a.get(id, approvalId)
+                Vault.touch()
                 detail = full
                 if (full.item.hasTotp) startTotp(id)
             } catch (e: Exception) { handle(e) }

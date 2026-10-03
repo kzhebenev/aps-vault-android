@@ -60,4 +60,11 @@
     <string name="s_lock_all">Lock all sessions</string>
     <string name="s_version">Version %1$s</string>
     <string name="done">Done</string>
+    <string name="af_unlock">Unlock APS Vault</string>
+    <string name="af_search">Search APS Vault</string>
+    <string name="af_needs_approval">This secret requires approval. Open it in the APS Vault app.</string>
+    <string name="s_autofill">Autofill service</string>
+    <string name="s_autofill_hint">Fill logins and passwords in other apps and browsers.</string>
+    <string name="s_autofill_on">On</string>
+    <string name="s_autofill_enable">Turn on</string>
 </resources>
