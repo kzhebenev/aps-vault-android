@@ -3,7 +3,10 @@
 Android client for a self-hosted [APS Vault](https://github.com/kzhebenev/aps-vault), built on
 `docs/CLIENT-CONTRACT.md` of the server (tested against 0.14). Android 11 and later.
 
-- Unlock with the master password, TOTP when 2FA is on.
+- Sign-in as the administrator (master password, TOTP when 2FA is on, or the PIN of a hardware
+  token / KMS cell when the server has one) or as a named user (e-mail, password, TOTP).
+- Roles per folder: create and edit secrets only where the session may write, with a password
+  generator; the signed-in person and their roles are shown in Settings.
 - List with search (name, tags, URL, folder), favourites first; details with login, password
   (hidden until shown), live TOTP code, URL, notes.
 - Copy to the clipboard, cleared after 30 s; marked sensitive so Android 13+ hides the preview.
