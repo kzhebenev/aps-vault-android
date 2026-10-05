@@ -6,3 +6,4 @@ local.properties
 .kotlin/
 *.apk
 *.keystore
+keystore.properties

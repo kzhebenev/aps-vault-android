@@ -118,7 +118,10 @@ class AutofillAuthActivity : FragmentActivity() {
         phase = Phase.Working; error = null
         lifecycleScope.launch {
             try {
-                val sid = api.unlock(password, totp.ifBlank { null })
+                val prefs = Vault.settings(this@AutofillAuthActivity)
+                val email = prefs.getString("login_email", "").orEmpty()
+                val sid = if (prefs.getString("login_mode", "owner") == "user" && email.isNotBlank())
+                    api.login(email, password, totp.ifBlank { null }) else api.unlock(password, totp.ifBlank { null })
                 api.sid = sid
                 Vault.touch()
                 if (Vault.biometricEnabled(this@AutofillAuthActivity)) runCatching { store.save(api.base, sid) }
@@ -207,9 +210,12 @@ class AutofillAuthActivity : FragmentActivity() {
         var totp by remember { mutableStateOf("") }
         Column(Modifier.fillMaxWidth().imePadding().padding(24.dp)) {
             Text(stringResource(R.string.bio_title), style = MaterialTheme.typography.titleLarge)
-            Text(Vault.base(this@AutofillAuthActivity).orEmpty(), style = MaterialTheme.typography.bodySmall)
+            val prefs = Vault.settings(this@AutofillAuthActivity)
+            val asUser = prefs.getString("login_mode", "owner") == "user"
+            Text(listOfNotNull(Vault.base(this@AutofillAuthActivity), prefs.getString("login_email", null)?.takeIf { asUser })
+                .joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(16.dp))
-            OutlinedTextField(password, { password = it }, label = { Text(stringResource(R.string.unlock_master)) },
+            OutlinedTextField(password, { password = it }, label = { Text(stringResource(if (asUser) R.string.unlock_password else R.string.unlock_master)) },
                 visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { unlockWithPassword(password, totp) }))

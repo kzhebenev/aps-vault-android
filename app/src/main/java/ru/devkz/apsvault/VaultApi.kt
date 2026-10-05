@@ -19,12 +19,39 @@ class VaultException(
     val approvalRequired: Boolean = false,
     val webauthnRequired: Boolean = false,
     val retryAfterSec: Int? = null,
+    val totpRequired: Boolean = false,
 ) : Exception(message) {
-    val needsTotp get() = status == 401 && message.orEmpty().contains("totp_code is required", true)
+    /** The owner's unlock says so in the text; a user's login (0.30) by the `X-TOTP-Required` header. */
+    val needsTotp get() = status == 401 && (totpRequired || message.orEmpty().contains("totp_code is required", true))
 }
+
+/** Who holds the session: the owner (master password) or a named user with roles per folder (0.20). */
+data class Identity(val kind: String, val email: String, val name: String, val grants: Map<Int, String>) {
+    val isOwner get() = kind == "owner"
+    fun role(folderId: Int): String? = if (isOwner) "owner" else grants[folderId]
+    fun canWrite(folderId: Int) = isOwner || role(folderId) in setOf("writer", "manager")
+}
+
+data class Folder(val id: Int, val name: String, val role: String?)
+
+/** Fields a person edits; null means "leave as is" when updating. */
+data class SecretEdit(
+    val folderId: Int,
+    val name: String,
+    val value: String?,
+    val login: String,
+    val url: String,
+    val notes: String,
+    val tags: String,
+    val totpSeed: String?,
+)
+
+/** Unlock paths besides the master password (contract, section 8). */
+data class UnlockOptions(val hsmPin: Boolean, val kmsPin: Boolean)
 
 data class SecretItem(
     val id: Int,
+    val folderId: Int,
     val folderName: String,
     val name: String,
     val tags: String,
@@ -43,6 +70,7 @@ data class SecretItem(
     companion object {
         fun from(o: JSONObject) = SecretItem(
             id = o.getInt("id"),
+            folderId = o.optInt("folder_id"),
             folderName = o.optStr("folder_name"),
             name = o.optStr("name"),
             tags = o.optStr("tags"),
@@ -91,12 +119,71 @@ class VaultApi(val base: String, @Volatile var sid: String? = null) {
 
     suspend fun health(): JSONObject = call("GET", "/api/health").obj()
 
-    /** Unlocks and returns the session id, read from the `vault_session` cookie of the response. */
+    /** The owner unlocks with the master password; returns the session id. */
     suspend fun unlock(password: String, totp: String?): String {
         val body = JSONObject().put("master_password", password)
         if (!totp.isNullOrBlank()) body.put("totp_code", totp.trim())
+        return session("/api/auth/unlock", body)
+    }
+
+    /** A named user signs in with e-mail and password (0.20), TOTP when they enabled it (0.30). */
+    suspend fun login(email: String, password: String, totp: String?): String {
+        val body = JSONObject().put("email", email.trim()).put("password", password)
+        if (!totp.isNullOrBlank()) body.put("totp_code", totp.trim())
+        return session("/api/auth/login", body)
+    }
+
+    /** PIN of the hardware token (`hsm`) or of the cloud KMS cell (`kms`), 0.15 / 0.16. */
+    suspend fun pinUnlock(kind: String, pin: String): String = session("/api/auth/$kind/unlock", JSONObject().put("pin", pin))
+
+    suspend fun unlockOptions(): UnlockOptions {
+        val hsm = runCatching { call("GET", "/api/auth/hsm/status").obj() }.getOrNull()
+        val kms = runCatching { call("GET", "/api/auth/kms/status").obj() }.getOrNull()
+        return UnlockOptions(
+            hsmPin = hsm?.optBoolean("enabled") == true && hsm.optBoolean("auto") != true,
+            kmsPin = kms?.optBoolean("enabled") == true && kms.optBoolean("pin_bound"),
+        )
+    }
+
+    suspend fun me(): Identity {
+        val o = call("GET", "/api/me").obj()
+        val g = o.optJSONObject("grants") ?: JSONObject()
+        return Identity(o.optStr("kind").ifEmpty { "owner" }, o.optStr("email"), o.optStr("name"),
+            g.keys().asSequence().associate { it.toInt() to g.getString(it) })
+    }
+
+    suspend fun folders(): List<Folder> {
+        val a = call("GET", "/api/folders").arr()
+        return (0 until a.length()).map { a.getJSONObject(it) }.map { Folder(it.getInt("id"), it.optStr("name"), it.optStr("role").ifEmpty { null }) }
+    }
+
+    suspend fun create(e: SecretEdit): Int =
+        call("POST", "/api/secrets", fields(e, null).put("folder_id", e.folderId)).obj().optInt("id")
+
+    /** Sends only what differs from [old]; a hidden (machine-only) value is never sent back. */
+    suspend fun update(id: Int, e: SecretEdit, old: SecretFull) {
+        val body = fields(e, old)
+        if (e.folderId != old.item.folderId) body.put("folder_id", e.folderId)
+        if (body.length() > 0) call("PATCH", "/api/secrets/$id", body)
+    }
+
+    private fun fields(e: SecretEdit, old: SecretFull?): JSONObject {
+        val o = JSONObject()
+        fun put(k: String, v: String?, was: String?) { if (v != null && v != was) o.put(k, v) }
+        put("name", e.name.trim(), old?.item?.name)
+        if (old == null || !old.valueHidden) put("value", e.value, old?.value)
+        put("login", e.login, old?.login)
+        put("url", e.url.trim(), old?.item?.url)
+        put("notes", e.notes, old?.notes)
+        put("tags", e.tags.trim(), old?.item?.tags)
+        if (!e.totpSeed.isNullOrBlank()) o.put("totp_seed", e.totpSeed.replace(" ", ""))
+        return o
+    }
+
+    /** Posts a sign-in request and returns the session id, read from the `vault_session` cookie. */
+    private suspend fun session(path: String, body: JSONObject): String {
         return withContext(Dispatchers.IO) {
-            client.newCall(request("POST", "/api/auth/unlock", body, null)).execute().use { r ->
+            client.newCall(request("POST", path, body, null)).execute().use { r ->
                 val text = r.body?.string().orEmpty()
                 if (!r.isSuccessful) throw error(r, text)
                 val json = runCatching { JSONObject(text) }.getOrNull()
@@ -169,6 +256,7 @@ class VaultApi(val base: String, @Volatile var sid: String? = null) {
             approvalRequired = r.header("X-Approval-Required") == "1",
             webauthnRequired = r.header("X-WebAuthn-Required") == "1",
             retryAfterSec = r.header("Retry-After")?.toIntOrNull(),
+            totpRequired = r.header("X-TOTP-Required") == "1",
         )
     }
 

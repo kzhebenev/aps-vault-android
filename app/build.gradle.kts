@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,8 +18,21 @@ android {
         versionName = "0.1.0"
     }
 
+    // Release key: keystore.properties next to settings.gradle.kts (not in git).
+    val ks = rootProject.file("keystore.properties")
+    if (ks.exists()) {
+        val p = Properties().apply { ks.inputStream().use { load(it) } }
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(p.getProperty("storeFile"))
+            storePassword = p.getProperty("storePassword")
+            keyAlias = p.getProperty("keyAlias")
+            keyPassword = p.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

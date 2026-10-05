@@ -8,6 +8,7 @@ import android.content.Context
  */
 object Vault {
     @Volatile var api: VaultApi? = null
+    @Volatile var identity: Identity? = null
     @Volatile private var lastUsed = 0L
 
     fun settings(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)

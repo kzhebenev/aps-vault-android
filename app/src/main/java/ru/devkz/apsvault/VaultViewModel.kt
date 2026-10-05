@@ -17,6 +17,8 @@ sealed interface Screen {
     data object Unlock : Screen
     data object List : Screen
     data class Detail(val id: Int) : Screen
+    /** Create (id == null) or edit a secret. */
+    data class Edit(val id: Int?) : Screen
     data object Settings : Screen
 }
 
@@ -53,6 +55,18 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     var needTotp by mutableStateOf(false)
         private set
 
+    /** "owner" signs in with the master password, "user" with e-mail and password (0.20). */
+    var loginMode by mutableStateOf(prefs.getString("login_mode", "owner") ?: "owner")
+        private set
+    var loginEmail by mutableStateOf(prefs.getString("login_email", "") ?: "")
+        private set
+    var unlockOptions by mutableStateOf(UnlockOptions(hsmPin = false, kmsPin = false))
+        private set
+    var identity by mutableStateOf<Identity?>(Vault.identity)
+        private set
+    var folders by mutableStateOf<kotlin.collections.List<Folder>>(emptyList())
+        private set
+
     var secrets by mutableStateOf<kotlin.collections.List<SecretItem>>(emptyList())
         private set
     var query by mutableStateOf("")
@@ -74,7 +88,22 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     init {
         Vault.current(app)
         if (screen == Screen.List) refresh()
+        loadUnlockOptions()
     }
+
+    fun chooseLoginMode(mode: String) {
+        loginMode = mode; needTotp = false; error = null
+        prefs.edit().putString("login_mode", mode).apply()
+    }
+
+    private fun loadUnlockOptions() {
+        val a = api ?: return
+        viewModelScope.launch { runCatching { unlockOptions = a.unlockOptions() } }
+    }
+
+    /** Folders this session may write to: all for the owner, writer / manager grants for a user. */
+    val writableFolders get() = identity?.let { id -> folders.filter { id.canWrite(it.id) } }.orEmpty()
+    fun canWrite(folderId: Int) = identity?.canWrite(folderId) == true
 
     val canUseStoredSession get() = base?.let { biometricEnabled && store.hasStored(it) } == true
 
@@ -91,6 +120,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         api = VaultApi(b)
         error = null
         screen = Screen.Unlock
+        loadUnlockOptions()
         return true
     }
 
@@ -112,12 +142,13 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- unlock / lock --------------------------------------------------------------------
 
-    fun unlock(password: String, totpCode: String?) {
+    fun unlock(password: String, totpCode: String?, email: String = "") {
         val a = api ?: return
         busy = true; error = null
+        if (loginMode == "user") { loginEmail = email.trim(); prefs.edit().putString("login_email", loginEmail).apply() }
         viewModelScope.launch {
             try {
-                val sid = a.unlock(password, totpCode)
+                val sid = if (loginMode == "user") a.login(email, password, totpCode) else a.unlock(password, totpCode)
                 a.sid = sid
                 Vault.touch()
                 needTotp = false
@@ -136,6 +167,25 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** PIN of the hardware token or the KMS cell; gives the owner's session (contract, section 8). */
+    fun unlockWithPin(kind: String, pin: String) {
+        val a = api ?: return
+        busy = true; error = null
+        viewModelScope.launch {
+            try {
+                val sid = a.pinUnlock(kind, pin)
+                a.sid = sid
+                Vault.touch()
+                if (biometricEnabled) runCatching { store.save(a.base, sid) }
+                enterList()
+            } catch (e: VaultException) {
+                error = if (e.status == 429) "lockout:" + (e.retryAfterSec ?: 900) else e.message
+            } catch (e: Exception) {
+                error = e.message ?: e.javaClass.simpleName
+            } finally { busy = false }
+        }
+    }
+
     /** BiometricPrompt has authorised the cipher: read the stored sid and check it is still alive. */
     fun unlockWithCipher(cipher: Cipher) {
         val a = api ?: return
@@ -144,7 +194,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 a.sid = sid
-                a.checkSession()
+                identity = a.me(); Vault.identity = identity
                 Vault.touch()
                 enterList()
             } catch (e: VaultException) {
@@ -170,6 +220,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
     /** Forget the session in memory only; the biometric-protected copy stays. */
     private fun dropLocal() {
         api?.sid = null
+        Vault.identity = null; identity = null; folders = emptyList()
         secrets = emptyList(); detail = null; totp = null; query = ""
         totpJob?.cancel(); approvalJob?.cancel(); approval = ApprovalState.None
         screen = if (base == null) Screen.Setup else Screen.Unlock
@@ -195,7 +246,41 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadList() {
         val a = api ?: return
-        try { secrets = a.list(); Vault.touch() } catch (e: Exception) { handle(e) }
+        try {
+            if (identity == null) { identity = a.me(); Vault.identity = identity }
+            folders = a.folders()
+            secrets = a.list()
+            Vault.touch()
+        } catch (e: Exception) { handle(e) }
+    }
+
+    // ---- create / edit --------------------------------------------------------------------
+
+    fun newSecret() { error = null; screen = Screen.Edit(null) }
+
+    fun editSecret() { detail?.let { error = null; totpJob?.cancel(); screen = Screen.Edit(it.item.id) } }
+
+    fun cancelEdit() {
+        val s = screen as? Screen.Edit ?: return
+        screen = if (s.id != null && detail != null) Screen.Detail(s.id).also { detail?.let { d -> if (d.item.hasTotp) startTotp(d.item.id) } } else Screen.List
+    }
+
+    fun save(e: SecretEdit) {
+        val a = api ?: return
+        val s = screen as? Screen.Edit ?: return
+        if (e.name.isBlank()) { error = "name_required"; return }
+        if (e.url.isNotBlank() && !e.url.trim().startsWith("http://") && !e.url.trim().startsWith("https://")) { error = "bad_secret_url"; return }
+        busy = true; error = null
+        viewModelScope.launch {
+            try {
+                val id = if (s.id == null) a.create(e) else { a.update(s.id, e, detail!!); s.id }
+                Vault.touch()
+                secrets = a.list()
+                val item = secrets.firstOrNull { it.id == id }
+                if (item != null) open(item) else back()
+                info = "saved"
+            } catch (ex: Exception) { handle(ex) } finally { busy = false }
+        }
     }
 
     fun filtered(): kotlin.collections.List<SecretItem> {

@@ -25,6 +25,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -36,6 +38,10 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +81,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ru.devkz.apsvault.ApprovalState
+import ru.devkz.apsvault.Identity
 import ru.devkz.apsvault.BuildConfig
 import ru.devkz.apsvault.R
 import ru.devkz.apsvault.Screen
@@ -90,9 +97,10 @@ fun VaultApp(vm: VaultViewModel, biometricAvailable: Boolean, onBiometric: () ->
     MaterialTheme(colorScheme = colors) {
         val snack = remember { SnackbarHostState() }
         val errorText = vm.error?.let { errorMessage(it) }
-        LaunchedEffect(vm.info) { vm.info?.let { snack.showSnackbar(it); vm.info = null } }
+        val savedText = stringResource(R.string.edit_saved)
+        LaunchedEffect(vm.info) { vm.info?.let { snack.showSnackbar(if (it == "saved") savedText else it); vm.info = null } }
         LaunchedEffect(errorText, vm.screen) {
-            if (errorText != null && vm.screen !is Screen.Unlock && vm.screen !is Screen.Setup) {
+            if (errorText != null && vm.screen !is Screen.Unlock && vm.screen !is Screen.Setup && vm.screen !is Screen.Edit) {
                 snack.showSnackbar(errorText); vm.error = null
             }
         }
@@ -102,6 +110,7 @@ fun VaultApp(vm: VaultViewModel, biometricAvailable: Boolean, onBiometric: () ->
                 Screen.Unlock -> UnlockScreen(vm, biometricAvailable, onBiometric, errorText)
                 Screen.List -> ListScreen(vm, snack)
                 is Screen.Detail -> DetailScreen(vm, s.id, snack)
+                is Screen.Edit -> EditScreen(vm, s.id)
                 Screen.Settings -> SettingsScreen(vm, biometricAvailable)
             }
         }
@@ -114,6 +123,8 @@ private fun errorMessage(code: String): String = when {
     code == "webauthn_required" -> stringResource(R.string.err_webauthn)
     code == "session_expired" -> stringResource(R.string.err_session_expired)
     code == "stored_session_unreadable" -> stringResource(R.string.err_stored_unreadable)
+    code == "name_required" -> stringResource(R.string.edit_name_required)
+    code == "bad_secret_url" -> stringResource(R.string.edit_bad_url)
     code.startsWith("lockout:") -> stringResource(R.string.err_lockout, ((code.substringAfter(':').toIntOrNull() ?: 900) + 59) / 60)
     else -> code
 }
@@ -147,19 +158,44 @@ private fun SetupScreen(vm: VaultViewModel) {
 private fun UnlockScreen(vm: VaultViewModel, biometricAvailable: Boolean, onBiometric: () -> Unit, errorText: String?) {
     var password by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(vm.loginEmail) }
+    var pinMode by remember { mutableStateOf(false) }
+    val user = vm.loginMode == "user"
     val canBio = biometricAvailable && vm.canUseStoredSession
     var autoPrompted by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(canBio) { if (canBio && !autoPrompted) { autoPrompted = true; onBiometric() } }
-    val submit = { if (password.isNotEmpty() && !vm.busy) vm.unlock(password, totp.ifBlank { null }) }
+    val pinKind = if (vm.unlockOptions.hsmPin) "hsm" else "kms"
+    val submit = {
+        if (password.isNotEmpty() && !vm.busy && (!user || email.isNotBlank())) {
+            if (pinMode && !user) vm.unlockWithPin(pinKind, password) else vm.unlock(password, totp.ifBlank { null }, email)
+        }
+    }
     CenteredForm {
         Icon(Icons.Filled.Lock, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(8.dp))
         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge)
         Text(vm.base.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(selected = !user, onClick = { vm.chooseLoginMode("owner"); totp = "" },
+                shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text(stringResource(R.string.unlock_mode_owner)) }
+            SegmentedButton(selected = user, onClick = { vm.chooseLoginMode("user"); totp = ""; pinMode = false },
+                shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text(stringResource(R.string.unlock_mode_user)) }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (user) {
+            OutlinedTextField(
+                value = email, onValueChange = { email = it },
+                label = { Text(stringResource(R.string.unlock_email)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         OutlinedTextField(
             value = password, onValueChange = { password = it },
-            label = { Text(stringResource(R.string.unlock_master)) },
+            label = { Text(stringResource(when { user -> R.string.unlock_password; pinMode -> R.string.unlock_pin; else -> R.string.unlock_master })) },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = if (vm.needTotp) ImeAction.Next else ImeAction.Done),
@@ -183,7 +219,7 @@ private fun UnlockScreen(vm: VaultViewModel, biometricAvailable: Boolean, onBiom
             Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
         Spacer(Modifier.height(16.dp))
-        Button(onClick = submit, enabled = !vm.busy && password.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = submit, enabled = !vm.busy && password.isNotEmpty() && (!user || email.isNotBlank()), modifier = Modifier.fillMaxWidth()) {
             if (vm.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(stringResource(R.string.unlock_button))
         }
         if (canBio) {
@@ -191,6 +227,11 @@ private fun UnlockScreen(vm: VaultViewModel, biometricAvailable: Boolean, onBiom
             OutlinedButton(onClick = onBiometric, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Fingerprint, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.unlock_biometric))
+            }
+        }
+        if (!user && (vm.unlockOptions.hsmPin || vm.unlockOptions.kmsPin)) {
+            TextButton(onClick = { pinMode = !pinMode; password = "" }) {
+                Text(stringResource(if (pinMode) R.string.unlock_use_master else R.string.unlock_use_pin))
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -215,7 +256,12 @@ private fun ListScreen(vm: VaultViewModel, snack: SnackbarHostState) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
+                title = {
+                    Column {
+                        Text(stringResource(R.string.app_name))
+                        vm.identity?.let { Text(whoText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                },
                 actions = {
                     IconButton(onClick = { vm.refresh() }) { Icon(Icons.Filled.Refresh, stringResource(R.string.refresh)) }
                     IconButton(onClick = vm::openSettings) { Icon(Icons.Filled.Settings, stringResource(R.string.settings)) }
@@ -224,6 +270,11 @@ private fun ListScreen(vm: VaultViewModel, snack: SnackbarHostState) {
             )
         },
         snackbarHost = { SnackbarHost(snack) },
+        floatingActionButton = {
+            if (vm.writableFolders.isNotEmpty()) FloatingActionButton(onClick = vm::newSecret) {
+                Icon(Icons.Filled.Add, stringResource(R.string.edit_new))
+            }
+        },
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
             OutlinedTextField(
@@ -289,6 +340,9 @@ private fun DetailScreen(vm: VaultViewModel, id: Int, snack: SnackbarHostState) 
                 title = { Text(item?.name.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = vm::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
                 actions = {
+                    if (item != null && vm.detail != null && vm.canWrite(item.folderId)) IconButton(onClick = vm::editSecret) {
+                        Icon(Icons.Filled.Edit, stringResource(R.string.edit_edit))
+                    }
                     if (item != null) IconButton(onClick = { vm.toggleFavorite(id) }) {
                         Icon(if (item.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder, stringResource(R.string.favorite))
                     }
@@ -449,6 +503,19 @@ private fun SettingsScreen(vm: VaultViewModel, biometricAvailable: Boolean) {
         )
     }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            vm.identity?.let { who ->
+                Column {
+                    FieldLabel(stringResource(R.string.s_signed_in))
+                    Text(whoText(who))
+                    if (!who.isOwner) {
+                        val names = vm.folders.associate { it.id to it.name }
+                        who.grants.forEach { (fid, role) ->
+                            Text("${names[fid] ?: "#$fid"}: ${roleText(role)}", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
             Column {
                 FieldLabel(stringResource(R.string.s_address))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -497,3 +564,15 @@ private fun SettingsScreen(vm: VaultViewModel, biometricAvailable: Boolean) {
         }
     }
 }
+
+@Composable
+private fun roleText(role: String) = stringResource(when (role) {
+    "manager" -> R.string.role_manager
+    "writer" -> R.string.role_writer
+    "owner" -> R.string.role_owner
+    else -> R.string.role_reader
+})
+
+@Composable
+private fun whoText(id: Identity) =
+    if (id.isOwner) stringResource(R.string.who_owner) else listOf(id.name, id.email).filter { it.isNotBlank() }.distinct().joinToString(" · ")
