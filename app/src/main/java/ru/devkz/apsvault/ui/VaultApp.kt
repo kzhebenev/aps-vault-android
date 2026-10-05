@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -171,6 +174,9 @@ private fun UnlockScreen(vm: VaultViewModel, biometricAvailable: Boolean, onBiom
             if (pinMode && !user) vm.unlockWithPin(pinKind, password) else vm.unlock(password, totp.ifBlank { null }, email)
         }
     }
+    Column(Modifier.fillMaxSize()) {
+    Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+    UpdateBanner(vm.update)
     CenteredForm {
         Icon(Icons.Filled.Lock, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(8.dp))
@@ -237,6 +243,7 @@ private fun UnlockScreen(vm: VaultViewModel, biometricAvailable: Boolean, onBiom
         }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = vm::editAddress) { Text(stringResource(R.string.unlock_change_address)) }
+    }
     }
 }
 
@@ -356,8 +363,18 @@ private fun SettingsScreen(vm: VaultViewModel, biometricAvailable: Boolean) {
                 }
             }
             OutlinedButton(onClick = { vm.lock() }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.lock)) }
-            Text(stringResource(R.string.s_version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.s_version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.bodyMedium)
+                    Text(when {
+                        vm.update != null -> stringResource(R.string.update_available, vm.update!!.version)
+                        vm.updateChecked -> stringResource(R.string.update_latest)
+                        else -> ""
+                    }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = vm::checkUpdate) { Text(stringResource(R.string.update_check)) }
+            }
+            UpdateBanner(vm.update)
         }
     }
 }

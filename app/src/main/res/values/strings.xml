@@ -141,4 +141,11 @@
     <string name="edit_require_approval">Reading needs approval</string>
     <string name="edit_require_approval_hint">A second person confirms every read</string>
     <string name="role_owner_actor">administrator</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_downloading">Downloading %1$s…</string>
+    <string name="update_installed">Installed: %1$s</string>
+    <string name="update_button">Update</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_latest">This is the latest version</string>
+    <string name="update_bad_signature">The download is not signed by APS Vault, it was not installed</string>
 </resources>

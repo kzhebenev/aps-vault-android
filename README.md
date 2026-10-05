@@ -30,6 +30,9 @@ Android client for a self-hosted [APS Vault](https://github.com/kzhebenev/aps-va
 
 The session travels as `Authorization: Bearer`; the app keeps no cookies.
 
+- Updates: on start the app asks the GitHub releases API for the latest release; when it is newer,
+  a banner offers it. The APK is installed only if it is this package signed by the same key.
+
 ## Build
 
 JDK 17 and the Android SDK (platform 35):
@@ -41,6 +44,12 @@ JDK 17 and the Android SDK (platform 35):
 
 `formtest/` is a manual test bench for the autofill service (a native login form, and a
 WebView form when started with a URL); it is not shipped.
+
+## Releases
+
+Bump `versionCode` and `versionName` in `app/build.gradle.kts`, commit, then tag `v<versionName>`:
+the `release` workflow builds the signed APK (key from the `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD`
+secrets) and publishes it as a release, which installed apps pick up.
 
 ## Known limits
 

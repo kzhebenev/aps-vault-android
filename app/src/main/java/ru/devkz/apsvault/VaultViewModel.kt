@@ -79,6 +79,16 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var shareLink by mutableStateOf<ShareLink?>(null)
 
+    /** A newer release on GitHub, checked once per process start; null when none or offline. */
+    var update by mutableStateOf<Updater.Release?>(null)
+        private set
+    var updateChecked by mutableStateOf(false)
+        private set
+
+    fun checkUpdate() {
+        viewModelScope.launch { update = Updater.check(); updateChecked = true }
+    }
+
     var secrets by mutableStateOf<kotlin.collections.List<SecretItem>>(emptyList())
         private set
     var query by mutableStateOf("")
@@ -101,6 +111,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         Vault.current(app)
         if (screen == Screen.List) refresh()
         loadUnlockOptions()
+        checkUpdate()
     }
 
     fun chooseLoginMode(mode: String) {

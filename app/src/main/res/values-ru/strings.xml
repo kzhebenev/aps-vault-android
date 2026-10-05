@@ -141,4 +141,11 @@
     <string name="edit_require_approval">Чтение с подтверждением</string>
     <string name="edit_require_approval_hint">Каждое чтение подтверждает второй человек</string>
     <string name="role_owner_actor">администратор</string>
+    <string name="update_available">Доступна версия %1$s</string>
+    <string name="update_downloading">Загрузка версии %1$s…</string>
+    <string name="update_installed">Установлена %1$s</string>
+    <string name="update_button">Обновить</string>
+    <string name="update_check">Проверить обновления</string>
+    <string name="update_latest">Установлена последняя версия</string>
+    <string name="update_bad_signature">Скачанный файл подписан не ключом APS Vault, установка отменена</string>
 </resources>

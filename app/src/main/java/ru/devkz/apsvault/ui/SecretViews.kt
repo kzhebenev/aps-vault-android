@@ -165,6 +165,7 @@ fun ListScreen(vm: VaultViewModel, snack: SnackbarHostState) {
         },
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
+            UpdateBanner(vm.update)
             OutlinedTextField(
                 value = vm.query, onValueChange = { vm.query = it },
                 placeholder = { Text(stringResource(R.string.list_search)) },
