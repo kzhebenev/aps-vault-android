@@ -97,8 +97,9 @@ fun VaultApp(vm: VaultViewModel, biometricAvailable: Boolean, onBiometric: () ->
     MaterialTheme(colorScheme = colors) {
         val snack = remember { SnackbarHostState() }
         val errorText = vm.error?.let { errorMessage(it) }
-        val savedText = stringResource(R.string.edit_saved)
-        LaunchedEffect(vm.info) { vm.info?.let { snack.showSnackbar(if (it == "saved") savedText else it); vm.info = null } }
+        val known = mapOf("saved" to stringResource(R.string.edit_saved), "deleted" to stringResource(R.string.msg_deleted),
+            "rotated" to stringResource(R.string.msg_rotated))
+        LaunchedEffect(vm.info) { vm.info?.let { snack.showSnackbar(known[it] ?: it); vm.info = null } }
         LaunchedEffect(errorText, vm.screen) {
             if (errorText != null && vm.screen !is Screen.Unlock && vm.screen !is Screen.Setup && vm.screen !is Screen.Edit) {
                 snack.showSnackbar(errorText); vm.error = null
@@ -240,7 +241,7 @@ private fun UnlockScreen(vm: VaultViewModel, biometricAvailable: Boolean, onBiom
 }
 
 @Composable
-private fun CenteredForm(content: @Composable () -> Unit) {
+internal fun CenteredForm(content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().imePadding().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             content()
@@ -248,217 +249,13 @@ private fun CenteredForm(content: @Composable () -> Unit) {
     }
 }
 
-// ---- list -----------------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ListScreen(vm: VaultViewModel, snack: SnackbarHostState) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(stringResource(R.string.app_name))
-                        vm.identity?.let { Text(whoText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { vm.refresh() }) { Icon(Icons.Filled.Refresh, stringResource(R.string.refresh)) }
-                    IconButton(onClick = vm::openSettings) { Icon(Icons.Filled.Settings, stringResource(R.string.settings)) }
-                    IconButton(onClick = { vm.lock() }) { Icon(Icons.Filled.Lock, stringResource(R.string.lock)) }
-                },
-            )
-        },
-        snackbarHost = { SnackbarHost(snack) },
-        floatingActionButton = {
-            if (vm.writableFolders.isNotEmpty()) FloatingActionButton(onClick = vm::newSecret) {
-                Icon(Icons.Filled.Add, stringResource(R.string.edit_new))
-            }
-        },
-    ) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
-            OutlinedTextField(
-                value = vm.query, onValueChange = { vm.query = it },
-                placeholder = { Text(stringResource(R.string.list_search)) },
-                leadingIcon = { Icon(Icons.Filled.Search, null) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-            val items = vm.filtered()
-            if (items.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(stringResource(if (vm.query.isBlank()) R.string.list_empty else R.string.list_nothing),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(items, key = { it.id }) { s ->
-                        SecretRow(s) { vm.open(s) }
-                        HorizontalDivider()
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SecretRow(s: SecretItem, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(s.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false))
-                if (s.isFavorite) { Spacer(Modifier.width(6.dp)); Icon(Icons.Filled.Star, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary) }
-            }
-            val meta = listOf(s.folderName, s.host, s.tags).filter { it.isNotBlank() }.joinToString(" · ")
-            if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (s.machineOnly) Badge(stringResource(R.string.badge_machine))
-        if (s.requireApproval) Badge(stringResource(R.string.badge_approval))
-    }
-}
-
-@Composable
-private fun Badge(text: String) {
-    Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 6.dp))
-}
-
-// ---- detail ---------------------------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DetailScreen(vm: VaultViewModel, id: Int, snack: SnackbarHostState) {
-    BackHandler { vm.back() }
-    val item = vm.detail?.item ?: vm.secrets.firstOrNull { it.id == id }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(item?.name.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = { IconButton(onClick = vm::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
-                actions = {
-                    if (item != null && vm.detail != null && vm.canWrite(item.folderId)) IconButton(onClick = vm::editSecret) {
-                        Icon(Icons.Filled.Edit, stringResource(R.string.edit_edit))
-                    }
-                    if (item != null) IconButton(onClick = { vm.toggleFavorite(id) }) {
-                        Icon(if (item.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder, stringResource(R.string.favorite))
-                    }
-                },
-            )
-        },
-        snackbarHost = { SnackbarHost(snack) },
-    ) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (item == null) return@Column
-            val d = vm.detail
-            if (item.requireApproval && vm.approval !is ApprovalState.Granted) {
-                ApprovalBlock(vm, id)
-            } else if (d == null) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            } else {
-                Fields(vm, d)
-            }
-            Meta(item)
-        }
-    }
-}
-
-@Composable
-private fun Fields(vm: VaultViewModel, d: SecretFull) {
-    val ctx = LocalContext.current
-    val copiedFmt = stringResource(R.string.copied)
-    val loginLabel = stringResource(R.string.f_login)
-    val passwordLabel = stringResource(R.string.f_password)
-    val totpLabel = stringResource(R.string.f_totp)
-    if (d.login.isNotEmpty()) Field(loginLabel, d.login) {
-        vm.copy(ctx, loginLabel, d.login, copiedFmt.format(loginLabel))
-    }
-    if (d.item.machineOnly || d.valueHidden) {
-        Column {
-            FieldLabel(passwordLabel)
-            Text(stringResource(R.string.machine_only_note), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    } else {
-        var revealed by remember(d.item.id) { mutableStateOf(false) }
-        Column {
-            FieldLabel(passwordLabel)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (revealed) d.value else "•".repeat(minOf(d.value.length, 16)), fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                TextButton(onClick = { revealed = !revealed }) { Text(stringResource(if (revealed) R.string.hide else R.string.show)) }
-                TextButton(onClick = { vm.copy(ctx, passwordLabel, d.value, copiedFmt.format(passwordLabel)) }) { Text(stringResource(R.string.copy)) }
-            }
-        }
-    }
-    vm.totp?.let { t ->
-        Column {
-            FieldLabel(totpLabel)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val code = if (t.code.length == 6) t.code.substring(0, 3) + " " + t.code.substring(3) else t.code
-                Text(code, fontFamily = FontFamily.Monospace, fontSize = 26.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                Text(stringResource(R.string.totp_left, t.remaining), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { vm.copy(ctx, totpLabel, t.code, copiedFmt.format(totpLabel)) }) { Text(stringResource(R.string.copy)) }
-            }
-            LinearProgressIndicator(progress = { t.remaining / t.period.toFloat() }, modifier = Modifier.fillMaxWidth())
-        }
-    }
-    if (d.item.url.isNotEmpty()) Column {
-        FieldLabel(stringResource(R.string.f_url))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(d.item.url, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(d.item.url))) }) { Text(stringResource(R.string.open)) }
-        }
-    }
-    if (d.notes.isNotEmpty()) Column {
-        FieldLabel(stringResource(R.string.f_notes))
-        Text(d.notes, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun Field(label: String, value: String, onCopy: () -> Unit) {
-    Column {
-        FieldLabel(label)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-            TextButton(onClick = onCopy) { Text(stringResource(R.string.copy)) }
-        }
-    }
-}
-
-@Composable
-private fun FieldLabel(text: String) {
+internal fun FieldLabel(text: String) {
     Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
-private fun Meta(item: SecretItem) {
-    HorizontalDivider()
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        MetaLine(stringResource(R.string.f_folder), item.folderName)
-        if (item.tags.isNotBlank()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            item.tags.split(',').map { it.trim() }.filter { it.isNotEmpty() }.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
-        }
-        if (item.expiresAt.isNotBlank()) MetaLine(stringResource(R.string.f_expires), item.expiresAt.take(10))
-    }
-}
-
-@Composable
-private fun MetaLine(label: String, value: String) {
-    Row {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp))
-        Text(value, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun ApprovalBlock(vm: VaultViewModel, id: Int) {
+internal fun ApprovalBlock(vm: VaultViewModel, id: Int) {
     val ctx = LocalContext.current
     var reason by rememberSaveable { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -566,7 +363,7 @@ private fun SettingsScreen(vm: VaultViewModel, biometricAvailable: Boolean) {
 }
 
 @Composable
-private fun roleText(role: String) = stringResource(when (role) {
+internal fun roleText(role: String) = stringResource(when (role) {
     "manager" -> R.string.role_manager
     "writer" -> R.string.role_writer
     "owner" -> R.string.role_owner
@@ -574,5 +371,5 @@ private fun roleText(role: String) = stringResource(when (role) {
 })
 
 @Composable
-private fun whoText(id: Identity) =
+internal fun whoText(id: Identity) =
     if (id.isOwner) stringResource(R.string.who_owner) else listOf(id.name, id.email).filter { it.isNotBlank() }.distinct().joinToString(" · ")

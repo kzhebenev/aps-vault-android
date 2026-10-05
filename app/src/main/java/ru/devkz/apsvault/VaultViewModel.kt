@@ -31,6 +31,11 @@ sealed interface ApprovalState {
 }
 
 class VaultViewModel(app: Application) : AndroidViewModel(app) {
+    companion object {
+        const val ALL = -1
+        const val FAVORITES = -2
+    }
+
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
     val store = SessionStore(app)
 
@@ -66,6 +71,13 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var folders by mutableStateOf<kotlin.collections.List<Folder>>(emptyList())
         private set
+
+    /** List filter: ALL, FAVORITES or a folder id. */
+    var folderFilter by mutableStateOf(prefs.getInt("folder_filter", ALL))
+        private set
+    var history by mutableStateOf<kotlin.collections.List<HistoryEntry>?>(null)
+        private set
+    var shareLink by mutableStateOf<ShareLink?>(null)
 
     var secrets by mutableStateOf<kotlin.collections.List<SecretItem>>(emptyList())
         private set
@@ -256,7 +268,7 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- create / edit --------------------------------------------------------------------
 
-    fun newSecret() { error = null; screen = Screen.Edit(null) }
+    fun newSecret() { error = null; detail = null; screen = Screen.Edit(null) }
 
     fun editSecret() { detail?.let { error = null; totpJob?.cancel(); screen = Screen.Edit(it.item.id) } }
 
@@ -283,9 +295,34 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun selectFolder(f: Int) {
+        folderFilter = f
+        prefs.edit().putInt("folder_filter", f).apply()
+    }
+
+    fun isManager(folderId: Int) = identity?.let { it.isOwner || it.role(folderId) == "manager" } == true
+
+    fun createFolder(name: String) {
+        val a = api ?: return
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val id = a.createFolder(name.trim())
+                folders = a.folders()
+                selectFolder(id)
+            } catch (e: Exception) { handle(e) }
+        }
+    }
+
+    /** Search ignores the folder filter: a match anywhere is more useful than an empty tab. */
     fun filtered(): kotlin.collections.List<SecretItem> {
         val q = query.trim().lowercase()
-        if (q.isEmpty()) return secrets.sortedWith(compareByDescending<SecretItem> { it.isFavorite }.thenBy { it.name.lowercase() })
+        val base = when (folderFilter) {
+            ALL -> secrets
+            FAVORITES -> secrets.filter { it.isFavorite }
+            else -> secrets.filter { it.folderId == folderFilter }
+        }
+        if (q.isEmpty()) return base.sortedWith(compareByDescending<SecretItem> { it.isFavorite }.thenBy { it.name.lowercase() })
         return secrets.mapNotNull { s ->
             val score = when {
                 s.name.lowercase().startsWith(q) -> 3
@@ -317,8 +354,47 @@ class VaultViewModel(app: Application) : AndroidViewModel(app) {
 
     fun back() {
         totpJob?.cancel(); approvalJob?.cancel()
-        detail = null; totp = null; approval = ApprovalState.None
+        detail = null; totp = null; approval = ApprovalState.None; history = null; shareLink = null
         screen = Screen.List
+    }
+
+    fun loadHistory() {
+        val a = api ?: return
+        val id = detail?.item?.id ?: return
+        viewModelScope.launch { try { history = a.history(id); Vault.touch() } catch (e: Exception) { handle(e) } }
+    }
+
+    fun closeHistory() { history = null }
+
+    fun share(ttlMinutes: Int, maxUses: Int, note: String) {
+        val a = api ?: return
+        val id = detail?.item?.id ?: return
+        viewModelScope.launch { try { shareLink = a.share(id, ttlMinutes, maxUses, note); Vault.touch() } catch (e: Exception) { handle(e) } }
+    }
+
+    fun delete() {
+        val a = api ?: return
+        val id = detail?.item?.id ?: return
+        viewModelScope.launch {
+            try {
+                a.delete(id)
+                secrets = secrets.filter { it.id != id }
+                back(); info = "deleted"
+            } catch (e: Exception) { handle(e) }
+        }
+    }
+
+    fun rotateValue() {
+        val a = api ?: return
+        val id = detail?.item?.id ?: return
+        viewModelScope.launch {
+            try {
+                a.rotate(id)
+                secrets = a.list()
+                load(id, null)
+                info = "rotated"
+            } catch (e: Exception) { handle(e) }
+        }
     }
 
     fun toggleFavorite(id: Int) {

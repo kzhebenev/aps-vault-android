@@ -14,10 +14,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.Switch
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -71,11 +76,16 @@ fun EditScreen(vm: VaultViewModel, id: Int?) {
     var tags by rememberSaveable { mutableStateOf(old?.item?.tags.orEmpty()) }
     var notes by rememberSaveable { mutableStateOf(old?.notes.orEmpty()) }
     var totpSeed by rememberSaveable { mutableStateOf("") }
+    var expires by rememberSaveable { mutableStateOf(old?.item?.expiresAt?.take(10).orEmpty()) }
+    var machineOnly by rememberSaveable { mutableStateOf(old?.item?.machineOnly ?: false) }
+    var requireApproval by rememberSaveable { mutableStateOf(old?.item?.requireApproval ?: false) }
+    var picking by rememberSaveable { mutableStateOf(false) }
     var shown by rememberSaveable { mutableStateOf(old == null) }
     val valueHidden = old?.valueHidden == true
 
     val save = {
-        vm.save(SecretEdit(folderId, name, if (valueHidden) null else value, login, url, notes, tags, totpSeed.ifBlank { null }))
+        vm.save(SecretEdit(folderId, name, if (valueHidden) null else value, login, url, notes, tags, totpSeed.ifBlank { null },
+            expires, machineOnly, requireApproval))
     }
     Scaffold(topBar = {
         TopAppBar(
@@ -137,7 +147,49 @@ fun EditScreen(vm: VaultViewModel, id: Int?) {
                 minLines = 3, modifier = Modifier.fillMaxWidth())
             Field(totpSeed, { totpSeed = it }, R.string.edit_totp_seed,
                 hint = stringResource(if (old?.item?.hasTotp == true) R.string.edit_totp_keep else R.string.edit_totp_hint))
+            OutlinedTextField(
+                value = if (expires.isBlank()) "" else formatDate(expires), onValueChange = {}, readOnly = true,
+                label = { Text(stringResource(R.string.f_expires)) },
+                supportingText = { Text(stringResource(R.string.edit_expires_hint)) },
+                trailingIcon = {
+                    Row {
+                        if (expires.isNotBlank()) IconButton(onClick = { expires = "" }) { Icon(Icons.Filled.Close, stringResource(R.string.edit_clear)) }
+                        IconButton(onClick = { picking = true }) { Icon(Icons.Filled.DateRange, stringResource(R.string.edit_pick_date)) }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            SwitchRow(stringResource(R.string.edit_machine_only), stringResource(R.string.edit_machine_only_hint), machineOnly) { machineOnly = it }
+            SwitchRow(stringResource(R.string.edit_require_approval), stringResource(R.string.edit_require_approval_hint), requireApproval) { requireApproval = it }
         }
+    }
+    if (picking) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = runCatching {
+            java.time.LocalDate.parse(expires).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        }.getOrNull())
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { ms ->
+                        expires = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+                    }
+                    picking = false
+                }) { Text(stringResource(R.string.done)) }
+            },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text(stringResource(R.string.cancel)) } },
+        ) { DatePicker(state) }
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

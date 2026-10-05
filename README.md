@@ -7,8 +7,14 @@ Android client for a self-hosted [APS Vault](https://github.com/kzhebenev/aps-va
   token / KMS cell when the server has one) or as a named user (e-mail, password, TOTP).
 - Roles per folder: create and edit secrets only where the session may write, with a password
   generator; the signed-in person and their roles are shown in Settings.
-- List with search (name, tags, URL, folder), favourites first; details with login, password
-  (hidden until shown), live TOTP code, URL, notes.
+- Folders: tabs for all secrets, favourites and each folder with counts; the "all" view is grouped
+  by folder; the owner creates folders. Search covers every folder.
+- Secret card: login, password (hidden until shown), the one-time code with a countdown ring, site,
+  notes and tags; expiry, machine-only, approval and rotation badges; version, dates, read count,
+  rotation status. Version history with older values, one-time share links (manager), a fresh
+  server-generated value and deletion (writer).
+- Edit form: folder, name, login, password with a generator, site, tags, notes, TOTP key, expiry
+  date, machine-only and approval switches.
 - Copy to the clipboard, cleared after 30 s; marked sensitive so Android 13+ hides the preview.
 - Two-person rule: secrets with `require_approval` show a request form, then poll the approval
   and read the value with it. Without a notifier the approval link is shown and can be shared.

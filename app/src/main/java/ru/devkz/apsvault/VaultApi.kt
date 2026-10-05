@@ -44,6 +44,10 @@ data class SecretEdit(
     val notes: String,
     val tags: String,
     val totpSeed: String?,
+    /** YYYY-MM-DD; empty clears the deadline. */
+    val expiresAt: String = "",
+    val machineOnly: Boolean = false,
+    val requireApproval: Boolean = false,
 )
 
 /** Unlock paths besides the master password (contract, section 8). */
@@ -64,6 +68,11 @@ data class SecretItem(
     val requireApproval: Boolean,
     val updatedAt: String,
     val expiresAt: String,
+    val createdAt: String = "",
+    val lastAccessed: String = "",
+    val accessCount: Int = 0,
+    val version: Int = 1,
+    val rotation: Rotation? = null,
 ) {
     val host: String get() = runCatching { URI(url).host ?: "" }.getOrDefault("")
 
@@ -83,6 +92,14 @@ data class SecretItem(
             requireApproval = o.optBoolean("require_approval"),
             updatedAt = o.optStr("updated_at"),
             expiresAt = o.optStr("expires_at"),
+            createdAt = o.optStr("created_at"),
+            lastAccessed = o.optStr("last_accessed"),
+            accessCount = o.optInt("access_count"),
+            version = o.optInt("version", 1),
+            rotation = o.optJSONObject("rotation")?.let {
+                Rotation(it.optStr("target"), it.optInt("interval_days"), it.optBoolean("enabled"),
+                    it.optStr("next_at"), it.optStr("last_at"), it.optStr("last_status"), it.optStr("last_error"))
+            },
         )
     }
 }
@@ -106,6 +123,16 @@ data class SecretFull(
 }
 
 data class Totp(val code: String, val period: Int, val remaining: Int)
+
+/** Rotation in a target system (0.24): where, how often, how the last run went. */
+data class Rotation(
+    val target: String, val intervalDays: Int, val enabled: Boolean,
+    val nextAt: String, val lastAt: String, val lastStatus: String, val lastError: String,
+)
+
+data class HistoryEntry(val version: Int, val value: String, val hidden: Boolean, val changedAt: String, val changedBy: String)
+
+data class ShareLink(val url: String, val expiresAt: String, val maxUses: Int)
 
 data class Approval(val id: Int, val status: String, val approveUrl: String, val notified: Boolean)
 
@@ -177,6 +204,10 @@ class VaultApi(val base: String, @Volatile var sid: String? = null) {
         put("notes", e.notes, old?.notes)
         put("tags", e.tags.trim(), old?.item?.tags)
         if (!e.totpSeed.isNullOrBlank()) o.put("totp_seed", e.totpSeed.replace(" ", ""))
+        val oldExp = old?.item?.expiresAt?.take(10).orEmpty()
+        if (e.expiresAt != oldExp) { if (e.expiresAt.isEmpty()) { if (old != null) o.put("clear_expires", true) } else o.put("expires_at", e.expiresAt) }
+        if (e.machineOnly != (old?.item?.machineOnly ?: false)) o.put("machine_only", e.machineOnly)
+        if (e.requireApproval != (old?.item?.requireApproval ?: false)) o.put("require_approval", e.requireApproval)
         return o
     }
 
@@ -214,6 +245,30 @@ class VaultApi(val base: String, @Volatile var sid: String? = null) {
     }
 
     suspend fun favorite(id: Int) { call("POST", "/api/secrets/$id/favorite") }
+
+    suspend fun delete(id: Int) { call("DELETE", "/api/secrets/$id") }
+
+    /** A fresh server-generated value; the old one becomes the previous version. */
+    suspend fun rotate(id: Int, generate: String = "alnum:24") { call("POST", "/api/secrets/$id/rotate", JSONObject().put("generate", generate)) }
+
+    suspend fun history(id: Int): List<HistoryEntry> {
+        val o = call("GET", "/api/secrets/$id/history").obj()
+        val a = o.optJSONArray("history") ?: JSONArray()
+        return (0 until a.length()).map { a.getJSONObject(it) }.filter { !it.has("error") }.map {
+            HistoryEntry(it.optInt("version"), it.optStr("value"), it.optBoolean("hidden"), it.optStr("changed_at"), it.optStr("changed_by"))
+        }
+    }
+
+    /** One-time link for a person (contract, section 6); needs the manager role. */
+    suspend fun share(id: Int, ttlMinutes: Int, maxUses: Int, note: String): ShareLink {
+        val o = call("POST", "/api/share", JSONObject().put("secret_id", id).put("ttl_minutes", ttlMinutes)
+            .put("max_uses", maxUses).put("note", note)).obj()
+        val u = o.optStr("url")
+        return ShareLink(if (u.startsWith("http")) u else base + u, o.optStr("expires_at"), o.optInt("max_uses", maxUses))
+    }
+
+    suspend fun createFolder(name: String, description: String = ""): Int =
+        call("POST", "/api/folders", JSONObject().put("name", name).put("description", description)).obj().optInt("id")
 
     suspend fun requestApproval(id: Int, reason: String): Approval =
         approval(call("POST", "/api/secrets/$id/approvals", JSONObject().put("reason", reason)).obj())
